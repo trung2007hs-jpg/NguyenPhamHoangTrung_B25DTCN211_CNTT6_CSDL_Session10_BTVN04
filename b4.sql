@@ -1,3 +1,4 @@
+DROP TABLE Pharmacy_Inventory;
 CREATE TABLE Pharmacy_Inventory (
     Inventory_ID INT AUTO_INCREMENT PRIMARY KEY,
     Drug_Name VARCHAR(255),
@@ -6,29 +7,43 @@ CREATE TABLE Pharmacy_Inventory (
     Quantity INT
 );
 
-INSERT INTO Pharmacy_Inventory (Drug_Name, Batch_Number, Expiry_Date, Quantity) VALUES
-('Paracetamol', 'BATCH001', '2026-12-31', 1000),
-('Antibiotic A', 'BATCH002', '2025-05-20', 500),
-('Vitamin C', 'BATCH003', '2024-10-15', 2000),
-('Insulin', 'BATCH004', '2027-01-01', 100);
+-- Procedure xử lý 2.000.000 lô thuốc (Giải quyết yêu cầu dữ liệu lớn)
+DELIMITER //
+CREATE PROCEDURE SeedMassiveData()
+BEGIN
+    DECLARE i INT DEFAULT 1;
+    SET autocommit = 0; -- Tăng tốc độ insert
+    SET unique_checks = 0;
+    
+    WHILE i <= 2000000 DO
+        INSERT INTO Pharmacy_Inventory (Drug_Name, Batch_Number, Expiry_Date, Quantity)
+        VALUES (
+            CONCAT('Drug_', (i % 1000)), 
+            CONCAT('BATCH-', i), 
+            DATE_ADD('2024-01-01', INTERVAL (i % 1000) DAY), 
+            FLOOR(RAND() * 1000)
+        );
+        -- Commit định kỳ để tránh quá tải bộ nhớ
+        IF i % 50000 = 0 THEN
+            COMMIT;
+        END IF;
+        SET i = i + 1;
+    END WHILE;
+    SET autocommit = 1;
+    SET unique_checks = 1;
+    COMMIT;
+END //
+DELIMITER ;
 
--- Tạo 2 Single Index độc lập (Để so sánh)
-CREATE INDEX idx_drug_name ON Pharmacy_Inventory(Drug_Name);
-CREATE INDEX idx_expiry_date ON Pharmacy_Inventory(Expiry_Date);
+-- Thực thi nạp dữ liệu
+CALL SeedMassiveData();
 
--- Xóa Index cũ và tạo Composite Index (Tối ưu cho yêu cầu bài toán)
-DROP INDEX idx_drug_name ON Pharmacy_Inventory;
-DROP INDEX idx_expiry_date ON Pharmacy_Inventory;
+-- Triển khai Composite Index tối ưu cho truy vấn (Drug_Name, Expiry_Date)
 CREATE INDEX idx_drug_expiry ON Pharmacy_Inventory(Drug_Name, Expiry_Date);
+
+-- Giải pháp khắc phục tìm kiếm: Full-Text Search
+ALTER TABLE Pharmacy_Inventory ADD FULLTEXT(Drug_Name);
 
 -- Câu lệnh kiểm tra hiệu năng
 EXPLAIN SELECT * FROM Pharmacy_Inventory 
-WHERE Drug_Name = 'Paracetamol' AND Expiry_Date <= '2026-12-31';
-
--- Chạy lệnh này để thấy Index vẫn hoạt động (type = range/ref)
-EXPLAIN SELECT * FROM Pharmacy_Inventory 
-WHERE Drug_Name LIKE 'Para%';
-
--- Chạy lệnh này để thấy Index bị VÔ HIỆU HÓA (type = ALL)
-EXPLAIN SELECT * FROM Pharmacy_Inventory 
-WHERE Drug_Name LIKE '%Para%';
+WHERE Drug_Name = 'Drug_100' AND Expiry_Date <= '2025-12-31';
